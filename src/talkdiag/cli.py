@@ -56,6 +56,9 @@ def handle_summary(session: int, handle: int, info: dict, show_sensitive: bool =
     return {"session": session if show_sensitive else "[redacted]", "handle": handle if show_sensitive else "[redacted]",
             "plugin": parsed["plugin"], "opaque_id": parsed["opaque_id"] if show_sensitive else "[redacted]",
             "stream_count": parsed["stream_count"], "streams": safe(parsed["streams"], show_sensitive),
+            "plugin_type": parsed["plugin_type"], "plugin_stream_count": parsed["plugin_stream_count"],
+            "plugin_streams": safe(parsed["plugin_streams"], show_sensitive),
+            "ice": safe(parsed["ice"], show_sensitive), "dtls": parsed["dtls"], "flags": parsed["flags"],
             "queued_packets": parsed["queued_packets"], "findings": findings(info)}
 
 

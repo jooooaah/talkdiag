@@ -1,15 +1,16 @@
-# talkdiag 0.1.0 — Nextcloud Talk Server Diagnostics
+# talkdiag 0.1.1 — Nextcloud Talk Server Diagnostics
 
-**Experimentelles, lesendes CLI-Diagnosewerkzeug** für Nextcloud Talk / Janus / coturn. Kein Ersatz für Grafana. Python 3.11+, **keine Runtime-Abhängigkeiten**.
+**Experimental, read-only command-line troubleshooting for Nextcloud Talk media infrastructure.** The first release focuses on Janus Admin/Monitor API observations; optional adapters provide limited coturn, Signaling and recording status. This tool is **not** a replacement for Prometheus/Grafana.
 
-> **Wichtig:** Diese erste Version zeigt **Janus-Sessions und -Handles**, noch **keine eindeutig identifizierten Talk-Teilnehmer oder Räume**. Sie beweist keine Client-Firewallprobleme. Ein Janus-Handle ist nicht gleich einem Nutzer. Teste zuerst an einer eigenen Installation mit einer kleinen laufenden Testkonferenz.
+Python **3.11+**, with **no required third-party runtime dependencies**. Includes text output, JSON output suitable for diagnostic logs, and a simple terminal live view.
 
-## Schnellstart auf einem Talk-/HPB-Server (Debian/Ubuntu)
+> **Scope and limits:** Janus sessions/handles are **not** Nextcloud Talk rooms or uniquely identified people. A TURN relay address is not necessarily a client's public address. No client-firewall conclusions are made from TURN use alone. Missing observations are **unknown**, not healthy.
+
+## Quick installation (Linux)
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y python3 python3-venv unzip
-unzip talkdiag-v0.1.0.zip
+sudo apt-get install -y python3 python3-venv unzip  # Debian/Ubuntu example
+unzip talkdiag-v0.1.1.zip
 cd talkdiag-repo
 python3 -m venv .venv
 cp config.example.toml config.toml
@@ -18,86 +19,105 @@ chmod 600 config.toml
 ./bin/talkdiag --help
 ```
 
-**Kein `pip install` nötig!** Der mitgelieferte Starter `./bin/talkdiag` nutzt direkt das venv und den Quellcode im Repository. Es gibt keine Runtime-Pakete von PyPI. Alternativ kann man mit aktiviertem venv `PYTHONPATH=src python -m talkdiag ...` starten. Wer einen global verfügbaren Befehl möchte, kann optional mit `python -m pip install -e .` installieren (benötigt `setuptools` und möglicherweise einen Paketindex). Die Beispiele unten verwenden dann `talkdiag ...`; ohne Installation ist stets `./bin/talkdiag ...` gleichwertig.
+The bundled `./bin/talkdiag` launcher runs the sources in the repository with the local virtual environment. **No `pip install` is necessary.** Alternatively, run `PYTHONPATH=src python3 -m talkdiag ...`.
 
-### Janus Admin API konfigurieren
+For an existing installation, apply the *patch archive* in the repository root instead; see [Patch upgrades](#patch-upgrades).
 
-Das Tool erwartet eine **Janus Admin/Monitor HTTP API** (nicht die normale öffentliche Janus API). In vielen Installationen ist diese **standardmäßig abgeschaltet**. Sie wird im Janus-HTTP-Transport (z. B. `janus.transport.http.jcfg`) über den `[admin]`-Abschnitt aktiviert; der genaue Dateipfad hängt von Paket, Container und Deployment ab. Typisch ist HTTP auf Loopback-Port **7088**, aber die tatsächliche Konfiguration ist maßgeblich. Die Admin API sollte **nur lokal oder über einen SSH-Tunnel** zugänglich sein.
+## Janus Admin/Monitor API
 
-Beispiel für den Janus-HTTP-Transport (mit vorhandener Konfiguration abgleichen, **nicht blind überschreiben**):
+`talkdiag` requires the **Janus Admin API**, not the normal public Janus API. Configure the endpoint using your deployment system (package configuration, configuration management, or container orchestration); do not make manual changes to managed files that will be overwritten on the next deployment.
+
+Typical endpoint: `http://127.0.0.1:7088/admin`. A Janus HTTP transport configuration might contain:
 
 ```ini
+# Illustrative only; adapt to the installed Janus release and network setup.
+general: {
+    http = false
+    https = false
+}
 admin: {
     admin_http = true
     admin_port = 7088
     admin_base_path = "/admin"
-    admin_acl = "127.0.0.1"
+    admin_https = false
 }
 ```
 
-Für die verwendete Janus-Version unbedingt die zugehörigen Konfigurationsdateien prüfen. Ein erforderliches Admin-Secret kann in `janus.jcfg` unter `admin_secret` konfiguriert sein. **Nicht** in eine ZIP, ein Ticket oder eine Shell-History übernehmen. Stattdessen interaktiv setzen:
+**Security requirements:** Keep the Admin API on a protected interface/network, never expose port 7088 to the internet or a public reverse proxy, configure a strong and separate Janus `admin_secret` in the main Janus configuration, and restrict access at the network layer as appropriate. The Admin API itself can execute mutating operations even though `talkdiag` only sends read-only requests.
+
+A containerized deployment can run the CLI in a **separate diagnostic container attached only to an authorized internal network**, using its service DNS name (for example `http://janus:7088/admin`). **Do not mount the Docker socket** in that container. A host-based installation can use a reachable private endpoint or a protected tunnel. Avoid hardcoding container IP addresses that can change after redeployment.
+
+In `config.toml`:
+
+```toml
+[general]
+timeout_seconds = 3
+max_handles = 150
+
+[janus]
+admin_url = "http://127.0.0.1:7088/admin"  # replace with your protected endpoint
+```
+
+Read the secret interactively rather than putting it in command history or the repository:
 
 ```bash
 read -rs -p 'Janus Admin Secret: ' TALKDIAG_JANUS_SECRET; echo
 export TALKDIAG_JANUS_SECRET
+./bin/talkdiag sessions
+unset TALKDIAG_JANUS_SECRET
 ```
 
-Dann `config.toml` editieren (`[janus] admin_url = "http://127.0.0.1:7088/admin"`). Falls Janus remote läuft: SSH-Forwarding zum **loopbackgebundenen** Admin-Port verwenden, nicht den Port ins Internet öffnen.
+The secret is included as `admin_secret` in the JSON body of Janus Admin API requests. **`status` uses an API ping that does not establish authorization for privileged read requests**; verify with `sessions` or `scan` too. Janus may return an application error in an HTTP 200 body.
 
-### Testen
+## Commands
+
+All global flags (`--json`, `--config`, `--show-sensitive`) precede the subcommand:
 
 ```bash
-# Funktioniert ohne Serververbindung:
-talkdiag demo
-talkdiag client-help --browser firefox --issue ice
-
-# Benötigt Janus Admin API:
-talkdiag status
-talkdiag sessions --help  # --json steht als globale Option davor:
-talkdiag --json sessions
-talkdiag --show-sensitive sessions
-
-talkdiag --show-sensitive inspect --session 1234 --handle 5678
-# Für vertrauliche Rohdaten explizit freigeben:
-talkdiag --show-sensitive inspect --session 1234 --handle 5678 --raw
-
-talkdiag scan
-talkdiag --json scan > diag.json
-talkdiag top --interval 3
+./bin/talkdiag status
+./bin/talkdiag sessions
+./bin/talkdiag scan
+./bin/talkdiag top --interval 3
+./bin/talkdiag --json scan > diagnosis.json
+./bin/talkdiag --show-sensitive sessions
+./bin/talkdiag --show-sensitive inspect --session 1234 --handle 5678
+./bin/talkdiag --json --show-sensitive inspect --session 1234 --handle 5678 --raw > handle.json
+./bin/talkdiag client-help --browser firefox --issue ice
+./bin/talkdiag client-help --browser chrome --issue media
+./bin/talkdiag demo
 ```
 
-Die Optionen `--json`, `--config`, `--show-sensitive` stehen **vor** dem Unterbefehl. `top` benötigt ein interaktives Terminal. Ohne Paketinstallation ersetzen durch `PYTHONPATH=src python3 -m talkdiag ...`.
+`top` requires an interactive terminal. Use `--json scan` for machine-readable snapshots; all JSON errors are returned as JSON with a non-zero process exit code. **If you redirect to a file, verify it with** `python3 -m json.tool diagnosis.json >/dev/null` **before processing it as JSON.**
 
-### Optional: weitere Komponenten
+## What is reported
 
-`config.toml` kann zusätzlich aktiviert werden für:
+Version 0.1.1 reads the following Janus `handle_info` structures when available:
 
-- **Signaling:** `[signaling] metrics_url = "http://127.0.0.1:.../metrics"` (in signaling-Konfiguration muss die Abfrage-IP unter `[stats] allowed_ips` erlaubt sein). Zeigt ausgewählte Summenmetriken, keine einzelnen Teilnehmer.
-- **coturn:** `[coturn] cli_host = "127.0.0.1"`, `cli_port = 5766`. Die Management-CLI kann im coturn-Konfigurationsfile ausgeschaltet sein. Zugangsdaten über `TALKDIAG_COTURN_PASSWORD`; die aktuelle Implementierung holt die **rohe `ps`-Ausgabe** als Best-Effort, zeigt standardmäßig keine sensiblen Angaben. TCP-Verbindung nur lokal; remote via SSH-Tunnel. Die CLI spricht **Klartext**, niemals öffentlich exponieren.
-- **Recording:** `[recording] systemd_unit = "DEIN-RECORDING-SERVICE.service"`. Nur `systemctl is-active`, **keine** tiefgehende Recording-Diagnose; bei Docker nicht passend.
+- `plugin_specific.streams`: VideoRoom stream descriptors, codec and subscriber counts.
+- `webrtc.ice`: ICE connection state and selected candidate pair (pair redacted by default).
+- `webrtc.dtls`: DTLS state and readiness.
+- `webrtc.media`: per-m-line audio/video direction, codec, RTP packet/byte totals, `bytes_lastsec`, NACK and retransmission counters, and RTCP values including RTT, jitter and loss counters.
+- `queued-packets` and basic handle readiness flags.
 
-`talkdiag status` unterscheidet `reachable`, `inactive`, `error` und `not_configured`. Ein erreichbarer Dienst ist **nicht automatisch gesund**.
+The `stream_count` in a handle summary represents **WebRTC media entries**, not a number of subscribers or people. `plugin_stream_count` is shown separately. RTP/RTCP packet-loss fields are **raw counters, not loss percentages**; `bytes_lastsec` is the field reported by Janus, not a smoothed bitrate. A single sample is insufficient to prove media stalling or explain an ICE fallback.
 
-## Funktionsumfang 0.1.0
+Initial findings are intentionally conservative: `QUEUE_HIGH`, `ICE_UNSTABLE`, and `DTLS_UNSTABLE` based on explicitly observed conditions. The lack of a finding does not establish a healthy stream.
 
-| Funktion | Stand |
-|---|---|
-| Janus Admin API Ping, Sessions, Handles, `handle_info` | Implementiert, read-only |
-| Diagnosen `ICE_UNSTABLE` und `QUEUE_HIGH` | Implementiert, bewusst konservativ; Janus-Versionen können andere Felder nutzen |
-| Text-Liveübersicht `top` | Implementiert, keine vollständige TUI |
-| JSON-Ausgabe für Tickets/Logs | Implementiert |
-| Client-Hinweise `client-help` | Firefox, Chrome, Edge; manueller Abgleich |
-| coturn Management-CLI `ps` | Optional, Rohdaten/Best-Effort |
-| Signaling Prometheus-Summenmetriken | Optional |
-| Recording systemd-Status | Optional |
-| Talk-Raum-/Teilnehmer-Identifikation | **Nicht implementiert** |
-| IP-/ASN-Gruppierung, TURN-Clienttransport-Korrelation | **Nicht implementiert** |
-| Browserreport-Import, Datensammlung im Hintergrund | **Nicht implementiert** |
-| Firewall-Fernprüfung, verlässliche Paketverlustdiagnose | **Nicht implementiert** |
+## Optional components
 
-### Datenschutz / Betriebsrisiken
+These adapters remain **best-effort and limited**:
 
-`--show-sensitive` kann IDs und `opaque_id` offenlegen. `--raw` kann **SDP, Client-IPs und andere sensible Metadaten** enthalten. Diese Dateien vor Versand redigieren. `coturn ps` enthält ggf. IPs und Nutzerinformationen und wird nur bei `--show-sensitive` ausgegeben. Keine Schreiboperationen an Janus, kein Mitschnitt von Medien, keine Root-Rechte erforderlich. Häufiges Pollen zahlreicher Handles erzeugt Admin-API-Last: `scan` ist auf 150 Handles limitiert (anpassbar über Config); `top` nicht schneller als alle 1 s.
+- **Signaling:** Configure `[signaling] metrics_url` for an allowlisted metrics endpoint. This provides selected aggregate metrics, not participant identities.
+- **coturn:** Configure `[coturn] cli_host = "127.0.0.1"` and `cli_port = 5766`, plus `TALKDIAG_COTURN_PASSWORD`. The current adapter only allows loopback management connections and retrieves limited `ps` information. Its management CLI is plaintext: never expose it publicly.
+- **Recording:** Configure `[recording] systemd_unit` only when the recording backend is managed by local systemd. The current adapter does **not** inspect container-managed recording services.
+
+Unconfigured components are labeled `not_configured`; reachability is not a health verdict.
+
+## Privacy and safe diagnostics
+
+By default, `talkdiag` redacts session/handle IDs, opaque IDs, selected ICE pairs, and raw protocol structures. `--show-sensitive` reveals identifying metadata, and `--raw` (which requires it) can contain **IP addresses, SDP, transport details, fingerprints, and potentially sensitive tokens**. Keep raw reports in protected local storage; sanitize them before posting to tickets, chat, or issue trackers.
+
+Neither administrator credentials nor complete raw dumps should be committed to source control. Read-only API calls still add load: scans are limited by `max_handles` and the live refresh interval has a minimum of one second. No packet capture, media recording or passive monitoring daemon is included.
 
 ## Tests
 
@@ -105,16 +125,26 @@ Die Optionen `--json`, `--config`, `--show-sensitive` stehen **vor** dem Unterbe
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-Die Tests laufen ohne Janus/coturn. Für reale Integrationstests bitte `--show-sensitive inspect ... --raw` nur lokal nutzen und niemals unredigiert veröffentlichen.
+The test suite uses artificial API fixtures; it does not require a running Janus installation.
 
-## Änderungspakete für Folgereleases
+## Patch upgrades
 
-Künftige Patch-ZIPs sollen **nur neue/geänderte Repository-Dateien** enthalten. Löschungen stehen zeilenweise als repo-relative Pfade in `deletions.txt`. Ein Patch-ZIP wird im Repository-Wurzelverzeichnis entpackt; `deletions.txt` vor dem Löschen prüfen. Baseline dieser Version: `0.1.0`.
+A patch archive contains **only added or modified repository-relative paths** and may contain a `deletions.txt` file listing paths to remove. Apply it from the parent directory of `talkdiag-repo` using `unzip -o` (or inspect the archive first). Always review `deletions.txt` before removing anything. Back up local modifications. Configuration files containing secrets are **not** included in patch releases.
 
-## Dokumentation
+Example, from the directory containing `talkdiag-repo`:
 
-- Janus Admin/Monitor API: https://janus.conf.meetecho.com/docs/admin.html
-- Signaling Metrics: https://nextcloud-spreed-signaling.readthedocs.io/en/latest/prometheus-metrics/
-- coturn: https://github.com/coturn/coturn/blob/master/README.turnserver
+```bash
+unzip -o talkdiag-v0.1.1-patch.zip
+cd talkdiag-repo
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+```
 
-MIT License. Keine Verbindung zu einem offiziellen Nextcloud-Projekt.
+The 0.1.1 patch is based on 0.1.0.
+
+## References
+
+- [Janus Admin/Monitor API](https://janus.conf.meetecho.com/docs/admin.html)
+- [Nextcloud Signaling metrics](https://nextcloud-spreed-signaling.readthedocs.io/en/latest/prometheus-metrics/)
+- [coturn](https://github.com/coturn/coturn)
+
+MIT License. Unofficial community utility; not affiliated with Nextcloud GmbH.
