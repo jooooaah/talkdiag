@@ -11,6 +11,7 @@ from .config import load_config, Config
 from .janus import Janus, JanusError
 from .diagnosis import findings, flatten_stream_state, network_group_note
 from .components import coturn_cli, signaling_metrics, recording_status
+from .live import LiveAnalyzer, render_top
 
 
 def parser() -> argparse.ArgumentParser:
@@ -62,7 +63,7 @@ def handle_summary(session: int, handle: int, info: dict, show_sensitive: bool =
             "queued_packets": parsed["queued_packets"], "findings": findings(info)}
 
 
-def scan_janus(janus: Janus, limit: int, sensitive: bool) -> dict:
+def scan_janus(janus: Janus, limit: int, sensitive: bool, tracking: bool = False) -> dict:
     if limit < 1:
         raise ValueError("max-handles must be positive")
     sessions = janus.sessions()
@@ -80,7 +81,10 @@ def scan_janus(janus: Janus, limit: int, sensitive: bool) -> dict:
             result["handles_scanned"] += 1
             try:
                 info = janus.handle_info(sid, hid)
-                result["handles"].append(handle_summary(sid, hid, info, sensitive))
+                summary = handle_summary(sid, hid, info, sensitive)
+                if tracking:
+                    summary["_tracking_key"] = (sid, hid)
+                result["handles"].append(summary)
             except JanusError as exc:
                 result["errors"].append({"handle": hid if sensitive else "[redacted]", "error": str(exc)})
     return result
@@ -158,7 +162,7 @@ def one_shot(args: argparse.Namespace, cfg: Config):
             result["raw"] = info
         return result
     if args.command in {"scan", "top"}:
-        return scan_janus(janus, args.max_handles or cfg.max_handles, args.show_sensitive)
+        return scan_janus(janus, args.max_handles or cfg.max_handles, args.show_sensitive, tracking=args.command == "top")
     raise ValueError("Unsupported command")
 
 
@@ -172,20 +176,16 @@ def main(argv=None) -> int:
                 raise ValueError("interval must be >= 1 second")
             if not sys.stdout.isatty():
                 raise ValueError("top requires a terminal; use scan --json for logs")
+            analyzer = LiveAnalyzer()
+            labels = {}
             try:
                 while True:
-                    data = one_shot(args, cfg)
-                    print("\033[2J\033[H", end="")
-                    print("talkdiag 0.1 - LIVE Janus handles | Ctrl+C to exit")
-                    print("Janus sessions:", data["session_count"], "Handles scanned:", data["handles_scanned"],
-                          "Partial:" if data["truncated"] else "Complete:", data["truncated"])
-                    print("-" * 78)
-                    print(f"{'HANDLE':<18} {'PLUGIN':<30} {'STREAMS':>7} {'WARN':>5}")
+                    data = analyzer.update(one_shot(args, cfg))
                     for item in data["handles"]:
-                        print(f"{str(item['handle']):<18.18} {str(item['plugin']):<30.30} {item['stream_count']:>7} {len(item['findings']):>5}")
-                    for error in data["errors"][:5]:
-                        print("ERROR", error)
-                    print("\nIDs are redacted by default; --show-sensitive reveals them. This is not a participant list.")
+                        key = item.get("_tracking_key")
+                        if key not in labels:
+                            labels[key] = f"H{len(labels) + 1}"
+                    print("\033[2J\033[H" + render_top(data, labels), flush=True)
                     time.sleep(args.interval)
             except KeyboardInterrupt:
                 print("\nStopped")

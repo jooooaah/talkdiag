@@ -1,4 +1,4 @@
-# talkdiag 0.1.1 — Nextcloud Talk Server Diagnostics
+# talkdiag 0.1.2 — Nextcloud Talk Server Diagnostics
 
 **Experimental, read-only command-line troubleshooting for Nextcloud Talk media infrastructure.** The first release focuses on Janus Admin/Monitor API observations; optional adapters provide limited coturn, Signaling and recording status. This tool is **not** a replacement for Prometheus/Grafana.
 
@@ -10,7 +10,7 @@ Python **3.11+**, with **no required third-party runtime dependencies**. Include
 
 ```bash
 sudo apt-get install -y python3 python3-venv unzip  # Debian/Ubuntu example
-unzip talkdiag-v0.1.1.zip
+unzip talkdiag-v0.1.2.zip
 cd talkdiag-repo
 python3 -m venv .venv
 cp config.example.toml config.toml
@@ -91,7 +91,7 @@ All global flags (`--json`, `--config`, `--show-sensitive`) precede the subcomma
 
 ## What is reported
 
-Version 0.1.1 reads the following Janus `handle_info` structures when available:
+Version 0.1.2 reads the following Janus `handle_info` structures when available:
 
 - `plugin_specific.streams`: VideoRoom stream descriptors, codec and subscriber counts.
 - `webrtc.ice`: ICE connection state and selected candidate pair (pair redacted by default).
@@ -101,7 +101,15 @@ Version 0.1.1 reads the following Janus `handle_info` structures when available:
 
 The `stream_count` in a handle summary represents **WebRTC media entries**, not a number of subscribers or people. `plugin_stream_count` is shown separately. RTP/RTCP packet-loss fields are **raw counters, not loss percentages**; `bytes_lastsec` is the field reported by Janus, not a smoothed bitrate. A single sample is insufficient to prove media stalling or explain an ICE fallback.
 
-Initial findings are intentionally conservative: `QUEUE_HIGH`, `ICE_UNSTABLE`, and `DTLS_UNSTABLE` based on explicitly observed conditions. The lack of a finding does not establish a healthy stream.
+Single-snapshot findings are intentionally conservative: `QUEUE_HIGH`, `ICE_UNSTABLE`, and `DTLS_UNSTABLE` based on explicitly observed conditions. The lack of a finding does not establish a healthy stream.
+
+## Live mode (`top`) — version 0.1.2
+
+The terminal live view shows an ephemeral `H1`, `H2`, ... label for each Janus handle, its VideoRoom role (publisher/subscriber, when reported), ICE and DTLS states, per-direction **audio/video traffic**, RTCP RTT (when positive and available), and finding counts. Media rates use Janus `bytes_lastsec * 8 / 1000`, displayed as kbit/s (k) or Mbit/s (M). `--` means not available; zero means Janus reported zero. Totals sum only known audio/video flows from observed handles. They are **not** physical interface rates, unique conference bandwidth, or packet-loss percentages. Data channels are not added to media totals.
+
+`top` additionally checks the same negotiated incoming/outgoing audio/video flow across refreshes. If positive `bytes_lastsec` was previously observed and then **three consecutive successful refreshes** report zero while ICE and DTLS remain ready, it displays `MEDIA_FLOW_STOPPED` with the relevant direction. This is a **heuristic**: a mute, pause, subscription change, or a quiet source can produce the same result. It is not proof of an outage. Unknown values are not treated as zero; the history resets on errors, truncated scans, disconnects, or missing handles. The history exists **only while `top` is running**; `scan` remains a one-shot snapshot with no temporal alert.
+
+The `Scan: complete/partial` label describes coverage of the current API poll, **not** whether a Talk conference is healthy. Scans remain capped by `max_handles`; use an appropriate limit for larger deployments. This is a plain terminal live view, not a full-screen graphical TUI.
 
 ## Optional components
 
@@ -134,12 +142,12 @@ A patch archive contains **only added or modified repository-relative paths** an
 Example, from the directory containing `talkdiag-repo`:
 
 ```bash
-unzip -o talkdiag-v0.1.1-patch.zip
+unzip -o talkdiag-v0.1.2-patch.zip
 cd talkdiag-repo
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-The 0.1.1 patch is based on 0.1.0.
+The 0.1.2 patch is based on 0.1.1. Apply intermediate patches in order when upgrading from older versions.
 
 ## References
 
