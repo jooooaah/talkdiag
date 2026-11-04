@@ -1,0 +1,22 @@
+[general]
+timeout_seconds = 3
+max_handles = 150
+
+[janus]
+# Janus Admin HTTP API, not the public Janus API. Local/SSH tunnel only.
+admin_url = "http://127.0.0.1:7088/admin"
+# Set secret via TALKDIAG_JANUS_SECRET environment variable.
+
+[signaling]
+# Optional, from the Signaling stats allowlisted endpoint.
+# metrics_url = "http://127.0.0.1:8080/metrics"
+
+[coturn]
+# Optional: management CLI should be loopback only.
+# cli_host = "127.0.0.1"
+# cli_port = 5766
+# Set password via TALKDIAG_COTURN_PASSWORD.
+
+[recording]
+# Optional: service name if recording backend runs under local systemd.
+# systemd_unit = "nextcloud-talk-recording.service"
