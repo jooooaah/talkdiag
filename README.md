@@ -1,4 +1,4 @@
-# talkdiag 0.1.2 — Nextcloud Talk Server Diagnostics
+# talkdiag 0.1.3 — Nextcloud Talk Server Diagnostics
 
 **Experimental, read-only command-line troubleshooting for Nextcloud Talk media infrastructure.** The first release focuses on Janus Admin/Monitor API observations; optional adapters provide limited coturn, Signaling and recording status. This tool is **not** a replacement for Prometheus/Grafana.
 
@@ -10,7 +10,7 @@ Python **3.11+**, with **no required third-party runtime dependencies**. Include
 
 ```bash
 sudo apt-get install -y python3 python3-venv unzip  # Debian/Ubuntu example
-unzip talkdiag-v0.1.2.zip
+unzip talkdiag-v0.1.3.zip
 cd talkdiag-repo
 python3 -m venv .venv
 cp config.example.toml config.toml
@@ -77,6 +77,8 @@ All global flags (`--json`, `--config`, `--show-sensitive`) precede the subcomma
 ./bin/talkdiag status
 ./bin/talkdiag sessions
 ./bin/talkdiag scan
+./bin/talkdiag paths
+./bin/talkdiag --json paths > paths.json
 ./bin/talkdiag top --interval 3
 ./bin/talkdiag --json scan > diagnosis.json
 ./bin/talkdiag --show-sensitive sessions
@@ -91,10 +93,10 @@ All global flags (`--json`, `--config`, `--show-sensitive`) precede the subcomma
 
 ## What is reported
 
-Version 0.1.2 reads the following Janus `handle_info` structures when available:
+Version 0.1.3 reads the following Janus `handle_info` structures when available:
 
 - `plugin_specific.streams`: VideoRoom stream descriptors, codec and subscriber counts.
-- `webrtc.ice`: ICE connection state and selected candidate pair (pair redacted by default).
+- `webrtc.ice`: ICE connection state, selected candidate pair (pair redacted by default), and privacy-preserving counts/types/protocols of local/remote candidate inventories.
 - `webrtc.dtls`: DTLS state and readiness.
 - `webrtc.media`: per-m-line audio/video direction, codec, RTP packet/byte totals, `bytes_lastsec`, NACK and retransmission counters, and RTCP values including RTT, jitter and loss counters.
 - `queued-packets` and basic handle readiness flags.
@@ -103,9 +105,15 @@ The `stream_count` in a handle summary represents **WebRTC media entries**, not 
 
 Single-snapshot findings are intentionally conservative: `QUEUE_HIGH`, `ICE_UNSTABLE`, and `DTLS_UNSTABLE` based on explicitly observed conditions. The lack of a finding does not establish a healthy stream.
 
-## Live mode (`top`) — version 0.1.2
+## ICE network diagnostics (`paths`) — version 0.1.3
 
-The terminal live view shows an ephemeral `H1`, `H2`, ... label for each Janus handle, its VideoRoom role (publisher/subscriber, when reported), ICE and DTLS states, per-direction **audio/video traffic**, RTCP RTT (when positive and available), and finding counts. Media rates use Janus `bytes_lastsec * 8 / 1000`, displayed as kbit/s (k) or Mbit/s (M). `--` means not available; zero means Janus reported zero. Totals sum only known audio/video flows from observed handles. They are **not** physical interface rates, unique conference bandwidth, or packet-loss percentages. Data channels are not added to media totals.
+Run `./bin/talkdiag paths` or `./bin/talkdiag --json paths` to inspect the available ICE candidates per Janus handle. Output includes totals by candidate **type** (`host`, `srflx`, `prflx`, `relay`) and advertised **protocol** (`udp`, `tcp`) for both local and remote inventories, plus an `unclassified` count. **Candidate addresses, ports, and raw candidate lines are not included**, even with `--show-sensitive` (that flag does expose session/handle IDs; `inspect --raw` can expose full sensitive ICE and SDP values). Missing candidate arrays are reported as unavailable, distinct from an available empty array.
+
+Crucially, these are **available candidates, not necessarily the selected candidate pair**. Janus may expose `selected-pair` as foundations only; this release therefore always reports `selected_path: unverified`. A remote `relay` or `tcp` candidate does **not** establish that TURN/TCP was selected, and cannot establish that a client firewall blocks UDP. This release does not correlate TURN allocations, public client IPs, ASN, or network groups. `top` shows the abbreviated remote candidate-type inventory as `R-CAND`, not a chosen route. Parsing is best-effort because candidate field formats can differ between Janus builds; unknowns are not guessed.
+
+## Live mode (`top`) — version 0.1.3
+
+The terminal live view shows an ephemeral `H1`, `H2`, ... label for each Janus handle, its VideoRoom role (publisher/subscriber, when reported), ICE and DTLS states, per-direction **audio/video traffic**, RTCP RTT (when positive and available), remote ICE candidate-type counts (R-CAND), and finding counts. Media rates use Janus `bytes_lastsec * 8 / 1000`, displayed as kbit/s (k) or Mbit/s (M). `--` means not available; zero means Janus reported zero. Totals sum only known audio/video flows from observed handles. They are **not** physical interface rates, unique conference bandwidth, or packet-loss percentages. Data channels are not added to media totals.
 
 `top` additionally checks the same negotiated incoming/outgoing audio/video flow across refreshes. If positive `bytes_lastsec` was previously observed and then **three consecutive successful refreshes** report zero while ICE and DTLS remain ready, it displays `MEDIA_FLOW_STOPPED` with the relevant direction. This is a **heuristic**: a mute, pause, subscription change, or a quiet source can produce the same result. It is not proof of an outage. Unknown values are not treated as zero; the history resets on errors, truncated scans, disconnects, or missing handles. The history exists **only while `top` is running**; `scan` remains a one-shot snapshot with no temporal alert.
 
@@ -142,12 +150,12 @@ A patch archive contains **only added or modified repository-relative paths** an
 Example, from the directory containing `talkdiag-repo`:
 
 ```bash
-unzip -o talkdiag-v0.1.2-patch.zip
+unzip -o talkdiag-v0.1.3-patch.zip
 cd talkdiag-repo
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-The 0.1.2 patch is based on 0.1.1. Apply intermediate patches in order when upgrading from older versions.
+The 0.1.3 patch is based on 0.1.2. Apply intermediate patches in order when upgrading from older versions.
 
 ## References
 

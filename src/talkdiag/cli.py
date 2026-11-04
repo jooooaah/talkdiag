@@ -28,6 +28,8 @@ def parser() -> argparse.ArgumentParser:
     inspect.add_argument("--handle", type=int, required=True)
     inspect.add_argument("--raw", action="store_true", help="Include raw Janus response (requires --show-sensitive)")
     scan = commands.add_parser("scan", help="Scan current Janus handles and findings")
+    paths = commands.add_parser("paths", help="ICE candidate inventories; selected route not verified")
+    paths.add_argument("--max-handles", type=int, help="Limit API requests per invocation")
     scan.add_argument("--max-handles", type=int, help="Limit API requests per invocation")
     top = commands.add_parser("top", help="Live textual snapshot (Ctrl+C to exit)")
     top.add_argument("--interval", type=float, default=3.0, help="Refresh interval in seconds (minimum 1)")
@@ -59,7 +61,7 @@ def handle_summary(session: int, handle: int, info: dict, show_sensitive: bool =
             "stream_count": parsed["stream_count"], "streams": safe(parsed["streams"], show_sensitive),
             "plugin_type": parsed["plugin_type"], "plugin_stream_count": parsed["plugin_stream_count"],
             "plugin_streams": safe(parsed["plugin_streams"], show_sensitive),
-            "ice": safe(parsed["ice"], show_sensitive), "dtls": parsed["dtls"], "flags": parsed["flags"],
+            "ice": safe(parsed["ice"], show_sensitive), "network": parsed["network"], "dtls": parsed["dtls"], "flags": parsed["flags"],
             "queued_packets": parsed["queued_packets"], "findings": findings(info)}
 
 
@@ -161,8 +163,16 @@ def one_shot(args: argparse.Namespace, cfg: Config):
         if args.raw:
             result["raw"] = info
         return result
-    if args.command in {"scan", "top"}:
-        return scan_janus(janus, args.max_handles or cfg.max_handles, args.show_sensitive, tracking=args.command == "top")
+    if args.command in {"scan", "top", "paths"}:
+        snapshot = scan_janus(janus, args.max_handles or cfg.max_handles, args.show_sensitive, tracking=args.command == "top")
+        if args.command == "paths":
+            return {"session_count": snapshot["session_count"], "handles_scanned": snapshot["handles_scanned"],
+                    "truncated": snapshot["truncated"], "errors": snapshot["errors"],
+                    "paths": [{"session": h["session"], "handle": h["handle"],
+                               "role": h["plugin_type"], "ice_state": h["ice"]["state"],
+                               "network": h["network"]} for h in snapshot["handles"]],
+                    "note": network_group_note()}
+        return snapshot
     raise ValueError("Unsupported command")
 
 

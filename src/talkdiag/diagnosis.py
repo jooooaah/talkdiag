@@ -5,6 +5,7 @@ webrtc.media (a dictionary keyed by m-line index). Values are observations,
 not proof of a client-side or server-side root cause.
 """
 from __future__ import annotations
+from .network import ice_network
 
 
 def _object(value):
@@ -89,6 +90,7 @@ def flatten_stream_state(info: dict) -> dict:
         "plugin_streams": plugin_items,
         "stream_count": len(media),
         "streams": media,
+        "network": ice_network(ice),
         "ice": {"state": _value(ice.get("state")),
                 "selected_pair": ice.get("selected-pair"),
                 "ready": _value(ice.get("ready"))},

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- Add `paths` command for per-handle privacy-preserving ICE candidate inventories.
+- Count candidate types and advertised protocols from structured and SDP-style records; preserve unavailable/unknown states.
+- Display observed remote candidate types in `top`; do not claim a selected transport or a client firewall restriction.
+- Add candidate parsing, redaction and CLI tests; document limits and general deployment considerations.
+
 ## 0.1.2
 
 - Expand `top` with VideoRoom role, ICE/DTLS state, incoming/outgoing audio/video rates, available RTT and summary totals.

@@ -108,8 +108,8 @@ def render_top(snapshot: dict, labels: dict[tuple, str] | None = None) -> str:
     lines = ["talkdiag - LIVE Janus diagnostics | Ctrl+C to exit",
              f"Sessions: {snapshot.get('session_count', 0)}  Handles: {snapshot.get('handles_scanned', 0)}  Scan: {'complete' if complete else 'partial'}",
              "Rates: kbit/s (k), Mbit/s (M), IN/OUT from Janus; -- = unavailable",
-             "-" * 111,
-             f"{'HANDLE':<12} {'ROLE':<11} {'ICE':<12} {'DTLS':<12} {'AUDIO IN/OUT':<15} {'VIDEO IN/OUT':<15} {'RTT':>7} {'WARN':>4}"]
+             "-" * 124,
+             f"{'HANDLE':<12} {'ROLE':<11} {'ICE':<12} {'DTLS':<12} {'AUDIO IN/OUT':<15} {'VIDEO IN/OUT':<15} {'RTT':>7} {'R-CAND':<14} {'WARN':>4}"]
     total_in = total_out = 0.0
     known_rates = False
     for idx, handle in enumerate(rows, 1):
@@ -127,10 +127,15 @@ def render_top(snapshot: dict, labels: dict[tuple, str] | None = None) -> str:
         total_out += (a_out or 0) + (v_out or 0)
         rtt = rtt_ms(handle)
         warn = len(handle.get("findings", [])) + len(handle.get("live_findings", []))
+        inventory = handle.get("network", {}).get("remote_candidates", {})
+        types = inventory.get("types", {})
+        r_cand = ",".join(f"{k}:{types[k]}" for k in sorted(types)) if inventory.get("available") else "--"
+        if inventory.get("available") and not types:
+            r_cand = "none/unknown"
         lines.append(f"{str(label):<12.12} {str(role):<11.11} {str(ice):<12.12} {str(dtls):<12.12} "
                      f"{(rate_label(a_in)+'/'+rate_label(a_out)):<15} {(rate_label(v_in)+'/'+rate_label(v_out)):<15} "
-                     f"{(str(rtt)+'ms') if rtt is not None else '--':>7} {warn:>4}")
-    lines.extend(["-" * 111,
+                     f"{(str(rtt)+'ms') if rtt is not None else '--':>7} {r_cand:<14.14} {warn:>4}")
+    lines.extend(["-" * 124,
                   f"Observed media totals: IN {rate_label(total_in) if known_rates else '--'}  OUT {rate_label(total_out) if known_rates else '--'} (known streams only; no double counting data channels)"])
     for handle in rows:
         identity = handle.get("_tracking_key")
@@ -138,5 +143,6 @@ def render_top(snapshot: dict, labels: dict[tuple, str] | None = None) -> str:
             lines.append(f"! {labels.get(identity, 'handle')}: {finding['code']} — {finding['evidence']}")
     for error in snapshot.get("errors", [])[:5]:
         lines.append(f"ERROR: {error}")
-    lines.append("Short labels are local to this live run, not participant IDs. No client identity inference.")
+    lines.append("R-CAND = available remote candidate types, NOT the selected ICE route. No client identity inference.")
+    lines.append("Short labels are local to this live run, not participant IDs.")
     return "\n".join(lines)
